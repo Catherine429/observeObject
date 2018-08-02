@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+
+<script>
+    class MyWatch {
+        constructor (obj, callback) {
+            let OP = Object.prototype;
+            let path = [];
+            if(OP.toString.call(obj) !== "[object Object]" && OP.toString.call(obj) !== "[object Array]") {
+                throw new Error('the first params must be Object or Array');
+            }
+            this.arrMethods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+            this.$callback = callback;
+            this.observe(obj, path);
+        }
+
+        observe(obj, path) {
+            let OP = Object.prototype;
+
+            //先看obj是否为数组，如果是，则要将该数组的_prop_指向原本Array.prototype的代理prototype
+            if(OP.toString.call(obj) === "[object Array]") {
+                this.changeArrPrototype(obj, path.slice(0));
+            }
+
+            //对传入对象的每个属性进行监视
+            Object.keys(obj).forEach(function (prop, index, array) {
+
+                //观察路径，就是观察递归的深度，就像一直往下递归遍历树一样
+                let pathArr = path.slice(0);
+                pathArr.push(prop);
+
+                let oldVal = obj[prop];
+                //将每个属性设置为get,set形式，从而在set的时候可以触发callback
+                Object.defineProperty(obj, prop, {
+                    get: function () {
+                        return oldVal;
+                    },
+                    set: (function (newVal) {
+                        //这里的this就是MyWatch
+
+                        if(oldVal !== newVal) {
+
+                            //如果设置的新值为对象形式，则对这个对象进行监控
+                            if(OP.toString.call(newVal) === "[object Object]" || OP.toString.call(newVal) === "[object Array]") {
+                                this.observe(newVal, pathArr, pathArr);
+                            }
+                            this.$callback(oldVal, newVal, pathArr);
+
+                            //千万不要忘记这一句，要将旧的值设为新的值，这样get的时候返回的值才是最新的，正确的
+                            oldVal = newVal;
+                        }
+                    }).bind(this),
+                    enumerable : true,
+                    configurable : true
+                })
+
+                //如果属性为对象或数组形式，则对该对象继续进行监视
+                if(OP.toString.call(obj[prop]) === "[object Object]" || OP.toString.call(obj[prop]) === "[object Array]") {
+                    this.observe(obj[prop], pathArr);
+                }
+            }, this)
+        };
+
+        /**
+         * @desc 该方法在Array.prorotype上加了一层
+         * 让调用该方法的这些数组的_proto_指向代理prototype
+         * 调用该方法array实例调用的push、pop、shift....等方法都会调用这个代理prototype上的这些方法
+         * */
+        changeArrPrototype(array, pathArr) {
+            let _myWatch = this;
+
+            //保存原始的Array prototype
+            let originalPrototype = Array.prototype;
+
+            //创建一个代理的prototype
+            let proxyPrototype = Object.create(originalPrototype);
+
+            //深拷贝
+            let arrMethods = this.arrMethods.slice(0);
+
+            //循环遍历所有需要代理的方法
+            arrMethods.forEach(function (method, index, array) {
+                //这里的this是_myWatch
+
+                Object.defineProperty(proxyPrototype, method, {
+
+                    //重写该数组方法
+                    value: function () {
+console.log('数组----' + this)
+                        //这里的this指向的是调用该方法的array，当然了，谁调用这个方法，this就指向谁
+                        let oldArr = this.slice(0);
+
+                        //获取方法参数
+                        let args = [].slice.call(arguments);
+
+                        //先调用原始的该方法,用apply方法，不要用call，因为call会把第二个参数包成数组，而我们要的是原本人家是啥类型就啥类型
+                        let result = originalPrototype[method].apply(this, args);
+
+                        //然后再调用callback
+                        _myWatch.$callback(oldArr, this, pathArr);
+
+                        _myWatch.observe(this, pathArr);
+
+                        return result;
+                    },
+                    writable : true,
+                    enumerable : false,
+                    configurable : true
+                })
+
+            }, this);
+
+            array.__proto__ = proxyPrototype;
+
+        }
+    }
+
+
+
+    //test
+    var data = {
+        name: 'night',
+        age: '21',
+        hobby: {
+            id: 1,
+            name: 'dance',
+            level: 'high',
+            lucky_number: [1, 2, 7, 4]
+        },
+        lucky_number: [1, 2, 7, 4]
+    }
+
+    new MyWatch(data, function (oldVal, newVal, path) {
+        console.log('callback here ----oldVal----');
+        console.log(oldVal);
+        console.log('callback here ----newVal---');
+        console.log(newVal);
+        console.log('path------');
+        console.log(path);
+    })
+
+    data.name = 'jazz';
+
+    data.hobby.name = 'sing';
+
+    data.hobby.lucky_number.push(666);
+    /*      data.lucky_number.shift();
+        data.lucky_number.unshift(2333);
+        data.lucky_number.sort();*/
+</script>
+</body>
+</html>
